@@ -14,8 +14,8 @@
 #include "im2d.h"
 #include "RgaApi.h"
 
-static constexpr int    FPS_LIMIT = 25;
-static constexpr qint64 INTERVAL  = 1000 / FPS_LIMIT;  // 40ms
+static constexpr int    FPS_LIMIT = 30;
+static constexpr qint64 INTERVAL  = 1000 / FPS_LIMIT;  // 33ms
 
 // ─────────────────────────────────────────────────────────────
 CameraThread::CameraThread(int idx, QObject* p)
