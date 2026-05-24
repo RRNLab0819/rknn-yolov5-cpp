@@ -37,10 +37,11 @@ add_executable(${PROJECT_NAME}
     infer_thread.h
 )
 
-# RGA 库路径：优先从环境变量 RGA_ROOT 获取，否则使用 CMAKE_SOURCE_DIR 相对路径
-set(RGA_ROOT "$ENV{RGA_ROOT}" CACHE PATH "Path to librga installation")
-if(NOT RGA_ROOT)
-    get_filename_component(RGA_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../librga" ABSOLUTE)
+# RGA 库路径：优先环境变量 RGA_ROOT，否则用相对于 CMakeLists.txt 的路径推导
+if(DEFINED ENV{RGA_ROOT})
+    set(RGA_ROOT "$ENV{RGA_ROOT}")
+else()
+    get_filename_component(RGA_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../../librga" ABSOLUTE)
 endif()
 message(STATUS "RGA_ROOT = ${RGA_ROOT}")
 
