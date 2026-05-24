@@ -396,7 +396,7 @@ int post_process(rknn_app_context_t *app_ctx, void *outputs, letterbox_t *letter
         float x2 = x1 + filterBoxes[n * 4 + 2];
         float y2 = y1 + filterBoxes[n * 4 + 3];
         int id = classId[n];
-        float obj_conf = objProbs[i];
+        float obj_conf = objProbs[n];
 
         od_results->results[last_count].box.left = (int)(clamp(x1, 0, model_in_w) / letter_box->scale);
         od_results->results[last_count].box.top = (int)(clamp(y1, 0, model_in_h) / letter_box->scale);
