@@ -80,7 +80,7 @@ bool CameraThread::takeInferFrame(std::vector<uint8_t>& rgb)
 {
     QMutexLocker lk(&m_mu);
     if (!m_hasInfer) return false;
-    rgb        = m_inferRGB;
+    rgb        = std::move(m_inferRGB);
     m_hasInfer = false;
     return true;
 }
@@ -157,6 +157,9 @@ void CameraThread::run()
 
     qDebug("[cam%d] streaming started", m_idx);
 
+    int timeoutConsecutive = 0;
+    static constexpr int MAX_TIMEOUTS = 10;  // 5秒无数据 → 判定掉线
+
     while (m_running) {
         fd_set fds; FD_ZERO(&fds); FD_SET(m_fd, &fds);
         timeval tv{0, 500000};  // 500ms 超时，便于响应 stop()
@@ -169,20 +172,31 @@ void CameraThread::run()
             qWarning("[cam%d] select error: %s, reconnecting...", m_idx, strerror(errno));
             emit errorOccurred(m_idx, QString("cam%1 select error: %2").arg(m_idx).arg(strerror(errno)));
             if (!tryReconnect()) break;
+            timeoutConsecutive = 0;
             continue;
         }
         if (r == 0) {
-            // select 超时：主动探测设备是否还在
-            // 拔掉摄像头后 select 不会报错，只会持续超时
-            // 用 VIDIOC_QUERYCAP 探一下，失败说明设备已消失
-            v4l2_capability cap{};
-            if (ioctl(m_fd, VIDIOC_QUERYCAP, &cap) < 0) {
-                qWarning("[cam%d] device lost (detected via timeout probe)", m_idx);
-                emit errorOccurred(m_idx, QString("cam%1 device unplugged").arg(m_idx));
-                if (!tryReconnect()) break;
+            timeoutConsecutive++;
+            // 连续超时：主动探测设备是否还在
+            if (timeoutConsecutive >= MAX_TIMEOUTS) {
+                v4l2_capability cap{};
+                if (ioctl(m_fd, VIDIOC_QUERYCAP, &cap) < 0) {
+                    qWarning("[cam%d] device lost (detected via timeout probe)", m_idx);
+                    emit errorOccurred(m_idx, QString("cam%1 device unplugged").arg(m_idx));
+                    if (!tryReconnect()) break;
+                    timeoutConsecutive = 0;
+                } else {
+                    // QUERYCAP 正常但持续超时 → 可能是传感器无信号
+                    // 尝试重连看能否恢复
+                    qWarning("[cam%d] persistent timeout, attempting reconnect", m_idx);
+                    emit errorOccurred(m_idx, QString("cam%1 signal timeout").arg(m_idx));
+                    if (!tryReconnect()) break;
+                    timeoutConsecutive = 0;
+                }
             }
             continue;
         }
+        timeoutConsecutive = 0;  // 有数据，清零
 
         v4l2_buffer buf{}; v4l2_plane pl[1]{};
         buf.type     = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
@@ -201,7 +215,6 @@ void CameraThread::run()
         }
 
         const void* nv12 = m_bufs[buf.index].start;
-        bool ok = rgaScale(nv12, CW, CH, rgb.data(), MW, MH);
 
         // 立刻还 buffer，不阻塞摄像头流水线
         {
@@ -214,18 +227,19 @@ void CameraThread::run()
             ioctl(m_fd, VIDIOC_QBUF, &qb);
         }
 
-        if (!ok) continue;
-
         // 成功采集到帧，更新看门狗
         touchWatchdog();
 
-        // 帧率限制：最多 25fps 送给 GUI
+        // 帧率限制：先判断再决定是否做 RGA，节省硬件资源
         qint64 now = QDateTime::currentMSecsSinceEpoch();
         if (now - lastStore < INTERVAL) continue;
         lastStore = now;
 
+        // RGA 硬件加速：NV12→RGB 格式转换
+        if (!rgaScale(nv12, CW, CH, rgb.data(), MW, MH)) continue;
+
         QImage img(rgb.data(), MW, MH, MW * 3, QImage::Format_RGB888);
-        img = img.copy();
+        img = img.copy();  // 深拷贝：rgb 下帧会被覆盖，m_frame 由 GUI 线程读取
         drawBoxes(img);
 
         int fps = updateFps(now);
@@ -235,8 +249,9 @@ void CameraThread::run()
             m_frame    = std::move(img);
             m_fps      = fps;
             m_hasNew   = true;
-            m_inferRGB = rgb;   // 直接赋值，避免不必要的拷贝
+            m_inferRGB = std::move(rgb);
             m_hasInfer = true;
+            rgb.resize(MW * MH * 3);  // 替换被 move 走的 buffer
         }
     }
 

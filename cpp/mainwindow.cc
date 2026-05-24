@@ -204,10 +204,9 @@ MainWindow::MainWindow(const QString& model, QWidget* parent)
 MainWindow::~MainWindow()
 {
     m_timer->stop();
-    m_timer->stop();
     m_watchdog->stop();
 
-    if (m_infer) { m_infer->stop(); m_infer->wait(5000); delete m_infer; }
+    if (m_infer) { m_infer->stop(); m_infer->wait(5000); delete m_infer; m_infer = nullptr; }
     for (auto* c : m_cams) {
         if (!c) continue;
         c->stop(); c->wait(3000); delete c;
@@ -330,8 +329,13 @@ void MainWindow::startCams()
     m_infer->setCameras(m_cams);
     connect(m_infer, &InferThread::personDetected,
             this, &MainWindow::onPersonDetected, Qt::QueuedConnection);
-    if (m_infer->init())
+    if (!m_infer->init()) {
+        qCritical("[main] model init FAILED, running without detection");
+        delete m_infer;
+        m_infer = nullptr;
+    } else {
         m_infer->start();
+    }
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -366,8 +370,11 @@ void MainWindow::onWatchdogTick()
             qWarning("[watchdog] InferThread stalled for >%dms! Restarting...",
                      INFER_TIMEOUT_MS);
             m_infer->stop();
-            m_infer->wait(3000);
-            // 重新初始化推理线程（模型已加载，只需重启线程）
+            if (!m_infer->wait(3000)) {
+                qCritical("[watchdog] InferThread refuse to stop, terminating!");
+                m_infer->terminate();
+                m_infer->wait(2000);
+            }
             m_infer->start();
             qDebug("[watchdog] InferThread restarted");
         }
@@ -379,7 +386,11 @@ void MainWindow::onWatchdogTick()
         if (!m_cams[i]->isAlive(now, CAM_TIMEOUT_MS)) {
             qWarning("[watchdog] cam%d thread stalled! Restarting...", i);
             m_cams[i]->stop();
-            m_cams[i]->wait(3000);
+            if (!m_cams[i]->wait(3000)) {
+                qCritical("[watchdog] cam%d refuse to stop, terminating!", i);
+                m_cams[i]->terminate();
+                m_cams[i]->wait(2000);
+            }
             m_cams[i]->start();
             qDebug("[watchdog] cam%d thread restarted", i);
         }

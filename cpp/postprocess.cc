@@ -21,6 +21,7 @@
 #include <string.h>
 #include <sys/time.h>
 
+#include <algorithm>
 #include <set>
 #include <vector>
 #define LABEL_NALE_TXT_PATH "./model/coco_80_labels_list.txt"
@@ -33,62 +34,26 @@ const int anchor[3][6] = {{10, 13, 16, 30, 33, 23},
 
 inline static int clamp(float val, int min, int max) { return val > min ? (val < max ? val : max) : min; }
 
-static char *readLine(FILE *fp, char *buffer, int *len)
-{
-    int ch;
-    int i = 0;
-    size_t buff_len = 0;
-
-    buffer = (char *)malloc(buff_len + 1);
-    if (!buffer)
-        return NULL; // Out of memory
-
-    while ((ch = fgetc(fp)) != '\n' && ch != EOF)
-    {
-        buff_len++;
-        void *tmp = realloc(buffer, buff_len + 1);
-        if (tmp == NULL)
-        {
-            free(buffer);
-            return NULL; // Out of memory
-        }
-        buffer = (char *)tmp;
-
-        buffer[i] = (char)ch;
-        i++;
-    }
-    buffer[i] = '\0';
-
-    *len = buff_len;
-
-    // Detect end
-    if (ch == EOF && (i == 0 || ferror(fp)))
-    {
-        free(buffer);
-        return NULL;
-    }
-    return buffer;
-}
-
 static int readLines(const char *fileName, char *lines[], int max_line)
 {
     FILE *file = fopen(fileName, "r");
-    char *s;
-    int i = 0;
-    int n = 0;
-
     if (file == NULL)
     {
         printf("Open %s fail!\n", fileName);
         return -1;
     }
 
-    while ((s = readLine(file, s, &n)) != NULL)
+    int i = 0;
+    char *buf = nullptr;
+    size_t bufSize = 0;
+    while (i < max_line)
     {
-        lines[i++] = s;
-        if (i >= max_line)
-            break;
+        ssize_t len = getline(&buf, &bufSize, file);
+        if (len < 0) break;
+        if (len > 0 && buf[len - 1] == '\n') buf[len - 1] = '\0';
+        lines[i++] = strdup(buf);
     }
+    free(buf);
     fclose(file);
     return i;
 }
@@ -148,38 +113,6 @@ static int nms(int validCount, std::vector<float> &outputLocations, std::vector<
     return 0;
 }
 
-static int quick_sort_indice_inverse(std::vector<float> &input, int left, int right, std::vector<int> &indices)
-{
-    float key;
-    int key_index;
-    int low = left;
-    int high = right;
-    if (left < right)
-    {
-        key_index = indices[left];
-        key = input[left];
-        while (low < high)
-        {
-            while (low < high && input[high] <= key)
-            {
-                high--;
-            }
-            input[low] = input[high];
-            indices[low] = indices[high];
-            while (low < high && input[low] >= key)
-            {
-                low++;
-            }
-            input[high] = input[low];
-            indices[high] = indices[low];
-        }
-        input[low] = key;
-        indices[low] = key_index;
-        quick_sort_indice_inverse(input, left, low - 1, indices);
-        quick_sort_indice_inverse(input, low + 1, right, indices);
-    }
-    return low;
-}
 
 static float sigmoid(float x) { return 1.0 / (1.0 + expf(-x)); }
 
@@ -436,7 +369,8 @@ int post_process(rknn_app_context_t *app_ctx, void *outputs, letterbox_t *letter
     {
         indexArray.push_back(i);
     }
-    quick_sort_indice_inverse(objProbs, 0, validCount - 1, indexArray);
+    std::sort(indexArray.begin(), indexArray.end(),
+              [&](int a, int b) { return objProbs[a] > objProbs[b]; });
 
     std::set<int> class_set(std::begin(classId), std::end(classId));
 

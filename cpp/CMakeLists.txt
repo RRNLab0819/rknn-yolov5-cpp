@@ -26,11 +26,23 @@ set(CMAKE_INSTALL_RPATH "$ORIGIN/lib")
 add_executable(${PROJECT_NAME}
     main.cc
     postprocess.cc
+    postprocess.h
+    yolov5.h
     ${rknpu2_yolov5_file}
     mainwindow.cc
+    mainwindow.h
     camera.cc
+    camera.h
     infer_thread.cc
+    infer_thread.h
 )
+
+# RGA 库路径：优先从环境变量 RGA_ROOT 获取，否则使用 CMAKE_SOURCE_DIR 相对路径
+set(RGA_ROOT "$ENV{RGA_ROOT}" CACHE PATH "Path to librga installation")
+if(NOT RGA_ROOT)
+    get_filename_component(RGA_ROOT "${CMAKE_CURRENT_SOURCE_DIR}/../../../librga" ABSOLUTE)
+endif()
+message(STATUS "RGA_ROOT = ${RGA_ROOT}")
 
 target_link_libraries(${PROJECT_NAME}
     imageutils
@@ -39,7 +51,7 @@ target_link_libraries(${PROJECT_NAME}
     ${LIBRKNNRT}
     pthread
     Qt5::Widgets
-    /home/rrn/3568/librga/libs/Linux/gcc-aarch64/librga.so
+    ${RGA_ROOT}/libs/Linux/gcc-aarch64/librga.so
 )
 
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
@@ -51,7 +63,7 @@ endif()
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${LIBRKNNRT_INCLUDES}
-    /home/rrn/3568/librga/include
+    ${RGA_ROOT}/include
 )
 
 install(TARGETS ${PROJECT_NAME} DESTINATION .)

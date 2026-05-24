@@ -10,7 +10,10 @@ InferThread::~InferThread()
 {
     stop();
     wait(5000);
-    if (m_modelOk) release_yolov5_model(&m_ctx);
+    if (m_modelOk) {
+        deinit_post_process();
+        release_yolov5_model(&m_ctx);
+    }
 }
 
 bool InferThread::init()
@@ -19,10 +22,11 @@ bool InferThread::init()
     if (ret == 0) {
         m_modelOk = true;
         qDebug("[infer] model loaded OK: %s", qPrintable(m_modelPath));
-    } else {
-        qWarning("[infer] model load FAILED (ret=%d), running without detection", ret);
+        init_post_process();
+        return true;
     }
-    return true;
+    qWarning("[infer] model load FAILED (ret=%d)", ret);
+    return false;
 }
 
 void InferThread::stop() { m_running = false; }
