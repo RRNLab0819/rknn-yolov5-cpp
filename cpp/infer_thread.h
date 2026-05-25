@@ -14,7 +14,7 @@ class InferThread : public QThread
 public:
     // 置信度阈值：低于此值的检测框直接丢弃
     // 平衡检出率和误报率，可根据实际场景调整
-    static constexpr float CONF_THRESHOLD = 0.35f;
+    static constexpr float CONF_THRESHOLD = 0.40f;
 
     // 推理轮询：每路最多等待多久没新帧就跳过（ms）
     // 避免某一路卡顿时其他路被饿死
