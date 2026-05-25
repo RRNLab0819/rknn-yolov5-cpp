@@ -25,6 +25,8 @@ set(CMAKE_INSTALL_RPATH "$ORIGIN/lib")
 
 add_executable(${PROJECT_NAME}
     main.cc
+    config.cc
+    config.h
     postprocess.cc
     postprocess.h
     yolov5.h

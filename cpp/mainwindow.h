@@ -9,6 +9,7 @@
 #include <QStackedWidget>
 #include <array>
 #include "camera.h"
+#include "config.h"
 #include "infer_thread.h"
 
 enum class ViewMode { Panorama, Front, Rear, Left, Right };
@@ -51,7 +52,7 @@ class MainWindow : public QWidget
 {
     Q_OBJECT
 public:
-    explicit MainWindow(const QString& model, QWidget* parent = nullptr);
+    explicit MainWindow(const AppConfig& cfg, QWidget* parent = nullptr);
     ~MainWindow();
 
 protected:
@@ -74,7 +75,7 @@ private:
     static int camOf(ViewMode m);
     static ViewMode modeOf(int camIdx);
 
-    QString   m_model;
+    AppConfig m_cfg;
     ViewMode  m_mode = ViewMode::Panorama;
 
     std::array<CameraThread*, 4> m_cams{};
@@ -85,11 +86,6 @@ private:
 
     std::array<int, 4> m_alertCount{};
     static constexpr int ALERT_HOLD = 8;
-
-    // 看门狗：推理线程连续多少秒没动就认为卡死
-    static constexpr int INFER_TIMEOUT_MS  = 8000;
-    // 看门狗：摄像头采集线程多久没帧就认为卡死
-    static constexpr int CAM_TIMEOUT_MS    = 5000;
 
     QStackedWidget* m_stack       = nullptr;
     QWidget*        m_gridWidget  = nullptr;

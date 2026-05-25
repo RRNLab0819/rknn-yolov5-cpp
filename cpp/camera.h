@@ -14,15 +14,20 @@ class CameraThread : public QThread
 {
     Q_OBJECT
 public:
-    static constexpr int CW = 1920, CH = 1080;
-    static constexpr int MW = 640,  MH = 640;
+    static constexpr int MW = 640, MH = 640;
 
     // 重连参数
     static constexpr int RECONNECT_DELAY_MS = 2000; // 掉线后等2秒再试
     static constexpr int RECONNECT_MAX      = 10;   // 最大连续重试次数
 
-    explicit CameraThread(int idx, QObject* parent = nullptr);
+    explicit CameraThread(int idx, const QString& device,
+                          const QString& label, QObject* parent = nullptr);
     ~CameraThread();
+
+    const QString& label()  const { return m_label; }
+    const QString& device() const { return m_device; }
+    int            index()  const { return m_idx; }
+    void setCaptureSize(int w, int h) { m_capW = w; m_capH = h; }
 
     bool init();  // 首次初始化（主线程调用，仅打开设备验证一次）
     void stop();
@@ -62,7 +67,10 @@ private:
     // 内部重连循环，stop()后返回false
     bool tryReconnect();
 
-    const int            m_idx;
+    const int       m_idx;
+    const QString   m_device;
+    const QString   m_label;
+    int             m_capW = 1920, m_capH = 1080;
     int                  m_fd      = -1;
     bool                 m_running = false;
     std::vector<V4L2Buf> m_bufs;

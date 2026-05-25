@@ -1,0 +1,16 @@
+[Unit]
+Description=RK3568 AI Video Surveillance (4-Channel YOLOv5)
+After=multi-user.target
+
+[Service]
+Type=simple
+ExecStart=/opt/rknn-app/rknn_yolov5_demo /opt/rknn-app/config.ini
+WorkingDirectory=/opt/rknn-app
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

@@ -18,8 +18,9 @@ static constexpr int    FPS_LIMIT = 30;
 static constexpr qint64 INTERVAL  = 1000 / FPS_LIMIT;  // 33ms
 
 // ─────────────────────────────────────────────────────────────
-CameraThread::CameraThread(int idx, QObject* p)
-    : QThread(p), m_idx(idx)
+CameraThread::CameraThread(int idx, const QString& device, const QString& label,
+                           QObject* p)
+    : QThread(p), m_idx(idx), m_device(device), m_label(label)
 {
     m_inferRGB.resize(MW * MH * 3);
 }
@@ -36,15 +37,15 @@ CameraThread::~CameraThread()
 bool CameraThread::init()
 {
     // 简单探测设备是否存在，不 mmap，不 streamon
-    QString dev = QString("/dev/video%1").arg(m_idx);
+    QString dev = m_device;
     int fd = ::open(dev.toUtf8().constData(), O_RDWR | O_NONBLOCK);
     if (fd < 0) {
-        qWarning("[cam%d] device not found at init: %s", m_idx, strerror(errno));
+        qWarning("[cam%s] device not found at init: %s", qPrintable(m_device), strerror(errno));
         // 不 emit error，允许 run() 里重连
         return false;
     }
     ::close(fd);
-    qDebug("[cam%d] device probed OK", m_idx);
+    qDebug("[cam%s] device probed OK", qPrintable(m_device));
     return true;
 }
 
@@ -113,10 +114,10 @@ bool CameraThread::tryReconnect()
     int retries = 0;
     while (m_running) {
         retries++;
-        qDebug("[cam%d] reconnect attempt %d/%d", m_idx, retries, RECONNECT_MAX);
+        qDebug("[cam%s] reconnect attempt %d/%d", qPrintable(m_device), retries, RECONNECT_MAX);
 
         if (openDev() && initMmap() && startStream()) {
-            qDebug("[cam%d] reconnected OK (attempt %d)", m_idx, retries);
+            qDebug("[cam%s] reconnected OK (attempt %d)", qPrintable(m_device), retries);
             emit reconnected(m_idx);
             return true;
         }
@@ -126,7 +127,7 @@ bool CameraThread::tryReconnect()
         if (retries >= RECONNECT_MAX) {
             emit errorOccurred(m_idx,
                 QString("cam%1 reconnect failed after %2 attempts, giving up")
-                    .arg(m_idx).arg(retries));
+                    .arg(m_device).arg(retries));
             // 给up后继续等，不退出线程，以便外部 stop() 干净退出
             // 每隔 10s 再试一次（设备可能被拔掉重插）
             for (int i = 0; i < 5000 && m_running; i++)
@@ -151,11 +152,11 @@ void CameraThread::run()
     // 首次建立流水线
     if (!openDev() || !initMmap() || !startStream()) {
         closeAll();
-        emit errorOccurred(m_idx, QString("cam%1 initial open failed, will retry").arg(m_idx));
+        emit errorOccurred(m_idx, QString("cam%1 initial open failed, will retry").arg(m_device));
         if (!tryReconnect()) return;
     }
 
-    qDebug("[cam%d] streaming started", m_idx);
+    qDebug("[cam%s] streaming started", qPrintable(m_device));
 
     int timeoutConsecutive = 0;
     static constexpr int MAX_TIMEOUTS = 10;  // 5秒无数据 → 判定掉线
@@ -169,8 +170,8 @@ void CameraThread::run()
 
         if (r < 0) {
             if (errno == EINTR) continue;
-            qWarning("[cam%d] select error: %s, reconnecting...", m_idx, strerror(errno));
-            emit errorOccurred(m_idx, QString("cam%1 select error: %2").arg(m_idx).arg(strerror(errno)));
+            qWarning("[cam%s] select error: %s, reconnecting...", qPrintable(m_device), strerror(errno));
+            emit errorOccurred(m_idx, QString("cam%1 select error: %2").arg(m_device).arg(strerror(errno)));
             if (!tryReconnect()) break;
             timeoutConsecutive = 0;
             continue;
@@ -181,15 +182,15 @@ void CameraThread::run()
             if (timeoutConsecutive >= MAX_TIMEOUTS) {
                 v4l2_capability cap{};
                 if (ioctl(m_fd, VIDIOC_QUERYCAP, &cap) < 0) {
-                    qWarning("[cam%d] device lost (detected via timeout probe)", m_idx);
-                    emit errorOccurred(m_idx, QString("cam%1 device unplugged").arg(m_idx));
+                    qWarning("[cam%s] device lost (detected via timeout probe)", qPrintable(m_device));
+                    emit errorOccurred(m_idx, QString("cam%1 device unplugged").arg(m_device));
                     if (!tryReconnect()) break;
                     timeoutConsecutive = 0;
                 } else {
                     // QUERYCAP 正常但持续超时 → 可能是传感器无信号
                     // 尝试重连看能否恢复
-                    qWarning("[cam%d] persistent timeout, attempting reconnect", m_idx);
-                    emit errorOccurred(m_idx, QString("cam%1 signal timeout").arg(m_idx));
+                    qWarning("[cam%s] persistent timeout, attempting reconnect", qPrintable(m_device));
+                    emit errorOccurred(m_idx, QString("cam%1 signal timeout").arg(m_device));
                     if (!tryReconnect()) break;
                     timeoutConsecutive = 0;
                 }
@@ -206,8 +207,8 @@ void CameraThread::run()
 
         if (ioctl(m_fd, VIDIOC_DQBUF, &buf) < 0) {
             if (errno == EIO || errno == ENODEV) {
-                qWarning("[cam%d] DQBUF error (device lost?): %s", m_idx, strerror(errno));
-                emit errorOccurred(m_idx, QString("cam%1 device lost, reconnecting").arg(m_idx));
+                qWarning("[cam%s] DQBUF error (device lost?): %s", qPrintable(m_device), strerror(errno));
+                emit errorOccurred(m_idx, QString("cam%1 device lost, reconnecting").arg(m_device));
                 if (!tryReconnect()) break;
                 continue;
             }
@@ -236,7 +237,7 @@ void CameraThread::run()
         lastStore = now;
 
         // RGA 硬件加速：NV12→RGB 格式转换
-        if (!rgaScale(nv12, CW, CH, rgb.data(), MW, MH)) continue;
+        if (!rgaScale(nv12, m_capW, m_capH, rgb.data(), MW, MH)) continue;
 
         QImage img(rgb.data(), MW, MH, MW * 3, QImage::Format_RGB888);
         img = img.copy();  // 深拷贝：rgb 下帧会被覆盖，m_frame 由 GUI 线程读取
@@ -257,7 +258,7 @@ void CameraThread::run()
 
     stopStream();
     closeAll();
-    qDebug("[cam%d] thread exit", m_idx);
+    qDebug("[cam%s] thread exit", qPrintable(m_device));
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -317,24 +318,24 @@ int CameraThread::updateFps(qint64 ms)
 // ─────────────────────────────────────────────────────────────
 bool CameraThread::openDev()
 {
-    QString dev = QString("/dev/video%1").arg(m_idx);
+    QString dev = m_device;
     m_fd = ::open(dev.toUtf8().constData(), O_RDWR | O_NONBLOCK);
     if (m_fd < 0) {
-        qWarning("[cam%d] open %s failed: %s", m_idx, qPrintable(dev), strerror(errno));
+        qWarning("[cam%s] open %s failed: %s", qPrintable(m_device), qPrintable(dev), strerror(errno));
         return false;
     }
 
     v4l2_format fmt{};
     fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE;
-    fmt.fmt.pix_mp.width                  = CW;
-    fmt.fmt.pix_mp.height                 = CH;
+    fmt.fmt.pix_mp.width                  = m_capW;
+    fmt.fmt.pix_mp.height                 = m_capH;
     fmt.fmt.pix_mp.pixelformat            = V4L2_PIX_FMT_NV12;
     fmt.fmt.pix_mp.field                  = V4L2_FIELD_NONE;
     fmt.fmt.pix_mp.num_planes             = 1;
-    fmt.fmt.pix_mp.plane_fmt[0].bytesperline = CW;
-    fmt.fmt.pix_mp.plane_fmt[0].sizeimage   = CW * CH * 3 / 2;
+    fmt.fmt.pix_mp.plane_fmt[0].bytesperline = m_capW;
+    fmt.fmt.pix_mp.plane_fmt[0].sizeimage   = m_capW * m_capH * 3 / 2;
     if (ioctl(m_fd, VIDIOC_S_FMT, &fmt) < 0) {
-        qWarning("[cam%d] VIDIOC_S_FMT failed: %s", m_idx, strerror(errno));
+        qWarning("[cam%s] VIDIOC_S_FMT failed: %s", qPrintable(m_device), strerror(errno));
         ::close(m_fd); m_fd = -1;
         return false;
     }

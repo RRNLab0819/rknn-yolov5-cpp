@@ -177,8 +177,8 @@ void NavButton::setState(bool active, bool alert)
 // ═══════════════════════════════════════════════════════════════
 // MainWindow
 // ═══════════════════════════════════════════════════════════════
-MainWindow::MainWindow(const QString& model, QWidget* parent)
-    : QWidget(parent), m_model(model)
+MainWindow::MainWindow(const AppConfig& cfg, QWidget* parent)
+    : QWidget(parent), m_cfg(cfg)
 {
     setStyleSheet("background:#04080f;");
     setFocusPolicy(Qt::StrongFocus);
@@ -311,8 +311,12 @@ void MainWindow::buildUI()
 // ─────────────────────────────────────────────────────────────
 void MainWindow::startCams()
 {
-    for (int i = 0; i < 4; i++) {
-        m_cams[i] = new CameraThread(i, this);
+    int nCams = (int)m_cfg.cameras.size();
+    for (int i = 0; i < nCams && i < 4; i++) {
+        const auto& cc = m_cfg.cameras[i];
+        m_cams[i] = new CameraThread(i, cc.device, cc.label, this);
+        if (cc.width > 0 && cc.height > 0)
+            m_cams[i]->setCaptureSize(cc.width, cc.height);
 
         connect(m_cams[i], &CameraThread::errorOccurred,
                 this, &MainWindow::onCamError, Qt::QueuedConnection);
@@ -321,11 +325,11 @@ void MainWindow::startCams()
         connect(m_cams[i], &CameraThread::reconnected,
                 this, &MainWindow::onCamReconnected, Qt::QueuedConnection);
 
-        m_cams[i]->init();   // 探测设备（失败了 run() 内部会重连）
+        m_cams[i]->init();
         m_cams[i]->start();
     }
 
-    m_infer = new InferThread(m_model, this);
+    m_infer = new InferThread(m_cfg.model.path, this);
     m_infer->setCameras(m_cams);
     connect(m_infer, &InferThread::personDetected,
             this, &MainWindow::onPersonDetected, Qt::QueuedConnection);
@@ -366,9 +370,9 @@ void MainWindow::onWatchdogTick()
     // 检查推理线程心跳
     if (m_infer && m_infer->isRunning()) {
         qint64 lastInfer = m_infer->lastInferMs();
-        if (lastInfer > 0 && (now - lastInfer) > INFER_TIMEOUT_MS) {
+        if (lastInfer > 0 && (now - lastInfer) > m_cfg.inferTimeoutMs) {
             qWarning("[watchdog] InferThread stalled for >%dms! Restarting...",
-                     INFER_TIMEOUT_MS);
+                     m_cfg.inferTimeoutMs);
             m_infer->stop();
             if (!m_infer->wait(3000)) {
                 qCritical("[watchdog] InferThread refuse to stop, terminating!");
@@ -383,7 +387,7 @@ void MainWindow::onWatchdogTick()
     // 检查摄像头采集线程心跳
     for (int i = 0; i < 4; i++) {
         if (!m_cams[i] || !m_cams[i]->isRunning()) continue;
-        if (!m_cams[i]->isAlive(now, CAM_TIMEOUT_MS)) {
+        if (!m_cams[i]->isAlive(now, m_cfg.camTimeoutMs)) {
             qWarning("[watchdog] cam%d thread stalled! Restarting...", i);
             m_cams[i]->stop();
             if (!m_cams[i]->wait(3000)) {
